@@ -1,0 +1,321 @@
+#include "key.h"
+#include "sys.h"
+#include "delay.h"
+#include "lcd.h"
+#include "stdio.h"
+#include "math.h"
+#include "ads115.h"
+#include "AD9910.h"
+
+u8 Key_Value;
+u8 sweepFlag;
+float findVrms(u8 ch,u16 time);
+void measureInputRes(void);
+void measureOutputRes(void);
+u16 result;
+u16 adMax=0;
+u16 adMin=65535;
+void switchInit(void)
+{
+    GPIO_InitTypeDef GPIO_InitStructure;
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOG,ENABLE);                //使能PORTC
+    GPIO_InitStructure.GPIO_Pin= GPIO_Pin_15;
+    GPIO_InitStructure.GPIO_Speed= GPIO_Speed_10MHz;
+    GPIO_InitStructure.GPIO_Mode=GPIO_Mode_Out_PP;
+    GPIO_Init(GPIOG, &GPIO_InitStructure);
+}
+void Key_Init(void)
+{
+
+    /******************PE的0 1 2 3作为输出**********************************/
+    GPIO_InitTypeDef GPIO_InitStructure;
+    EXTI_InitTypeDef EXTI_InitStructure;
+    NVIC_InitTypeDef NVIC_InitStructure;
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOF,ENABLE);                //使能PORTC
+    GPIO_InitStructure.GPIO_Pin= GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3;
+    GPIO_InitStructure.GPIO_Speed= GPIO_Speed_10MHz;
+    GPIO_InitStructure.GPIO_Mode=GPIO_Mode_Out_PP;
+    GPIO_Init(GPIOF, &GPIO_InitStructure);
+
+    /******************PE的 4 5 6 7作为下拉输入*****************************/
+
+    GPIO_InitStructure.GPIO_Pin= GPIO_Pin_4|GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7;
+    GPIO_InitStructure.GPIO_Speed= GPIO_Speed_10MHz;
+    GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IPD;  //PA0设置成输入，默认下拉
+    GPIO_Init(GPIOF, &GPIO_InitStructure);
+    GPIO_SetBits(GPIOF,GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2 |GPIO_Pin_3);
+    GPIO_ResetBits(GPIOF,GPIO_Pin_4|GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7);
+
+
+
+
+
+    /****************配置中断线***********************************************/
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO,ENABLE);	//使能复用功能时钟
+
+
+    GPIO_EXTILineConfig(GPIO_PortSourceGPIOF,GPIO_PinSource4);
+
+    EXTI_InitStructure.EXTI_Line=EXTI_Line4;
+    EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
+    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;
+    EXTI_InitStructure.EXTI_LineCmd = ENABLE;
+    EXTI_Init(&EXTI_InitStructure);
+
+
+    GPIO_EXTILineConfig(GPIO_PortSourceGPIOF,GPIO_PinSource5);
+    EXTI_InitStructure.EXTI_Line=EXTI_Line5;
+    EXTI_Init(&EXTI_InitStructure);
+
+
+    GPIO_EXTILineConfig(GPIO_PortSourceGPIOF,GPIO_PinSource6);
+    EXTI_InitStructure.EXTI_Line=EXTI_Line6;
+    EXTI_Init(&EXTI_InitStructure);
+
+    GPIO_EXTILineConfig(GPIO_PortSourceGPIOF,GPIO_PinSource7);
+    EXTI_InitStructure.EXTI_Line=EXTI_Line7;
+    EXTI_Init(&EXTI_InitStructure);
+
+
+
+    /******************************配置中断优先级**************************/
+    NVIC_InitStructure.NVIC_IRQChannel = EXTI4_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+    NVIC_InitStructure.NVIC_IRQChannel = EXTI9_5_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOE,ENABLE);                //使能PORTC
+    GPIO_InitStructure.GPIO_Pin= GPIO_Pin_4;
+    GPIO_InitStructure.GPIO_Speed= GPIO_Speed_10MHz;
+    GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IPU;
+    GPIO_Init(GPIOE, &GPIO_InitStructure);
+}
+
+
+/*****************键盘扫描*********************************/
+u8 Read_KeyValue(void)
+{
+    u8 KeyValue=0;
+    if((GPIO_ReadInputData(GPIOF)&0xff)!=0x0f)
+    {
+        //delay_ms(10);
+        if((GPIO_ReadInputData(GPIOF)&0xff)!=0x0f)
+        {
+            GPIO_SetBits(GPIOF,GPIO_Pin_0);
+            GPIO_ResetBits(GPIOF,GPIO_Pin_1|GPIO_Pin_2|GPIO_Pin_3);
+            switch(GPIO_ReadInputData(GPIOF)&0xff)
+            {
+            case 0x11:
+                KeyValue=1;
+                break;
+            case 0x21:
+                KeyValue=5;
+                break;
+            case 0x41:
+                KeyValue=9;
+                break;
+            case 0x81:
+                KeyValue=13;
+                break;
+            }
+            GPIO_SetBits(GPIOF,GPIO_Pin_1);
+            GPIO_ResetBits(GPIOF,GPIO_Pin_0|GPIO_Pin_2|GPIO_Pin_3);
+            switch(GPIO_ReadInputData(GPIOF)&0xff)
+            {
+            case 0x12:
+                KeyValue=2;
+                break;
+            case 0x22:
+                KeyValue=6;
+                break;
+            case 0x42:
+                KeyValue=10;
+                break;
+            case 0x82:
+                KeyValue=14;
+                break;
+            }
+            GPIO_SetBits(GPIOF,GPIO_Pin_2);
+            GPIO_ResetBits(GPIOF,GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_3);
+            switch(GPIO_ReadInputData(GPIOF)&0xff)
+            {
+            case 0x14:
+                KeyValue=3;
+                break;
+            case 0x24:
+                KeyValue=7;
+                break;
+            case 0x44:
+                KeyValue=11;
+                break;
+            case 0x84:
+                KeyValue=15;
+                break;
+            }
+            GPIO_SetBits(GPIOF,GPIO_Pin_3);
+            GPIO_ResetBits(GPIOF,GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2);
+            switch(GPIO_ReadInputData(GPIOF)&0xff)
+            {
+            case 0x18:
+                KeyValue=4;
+                break;
+            case 0x28:
+                KeyValue=8;
+                break;
+            case 0x48:
+                KeyValue=12;
+                break;
+            case 0x88:
+                KeyValue=16;
+                break;
+            }
+            GPIO_SetBits(GPIOF,GPIO_Pin_0|GPIO_Pin_1|GPIO_Pin_2 |GPIO_Pin_3);
+            GPIO_ResetBits(GPIOF, GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_6 |GPIO_Pin_7);
+            while((GPIO_ReadInputData(GPIOF)&0xff)!=0x0f);
+            return KeyValue;
+        }
+    }
+    return 0;
+}
+
+float adcResult_outputRes2;
+float adcResult_outputRes1;
+float adcResult_InputRes;
+float inputRes;
+float outputRes;
+float amp;
+void Key_Deal()
+{
+
+    u16 time;
+    u32 frequency;
+    
+    
+    u16 adResult=0;
+    Key_Value=Read_KeyValue();
+    switch(Key_Value)
+    {
+    case 1:
+    {
+
+        measureInputRes();
+        break;
+    }
+    case 2:
+    {
+        measureOutputRes();
+        break;
+    }
+    case 3:
+    {
+        LCD_Clear(WHITE);
+        for(frequency=100; frequency<10000; frequency+=(10000-100)/POINTS)
+        {
+            time++;
+            Freq_convert(frequency);
+            LCD_DrawLine(adResult/100,time*2.5-160,adResult/100,(time+1)*2.5-160);
+            adResult=READAD(ch1);
+            delay_ms(5);
+
+
+        }
+        break;
+    }
+    case 4:
+    {
+        sweepFlag=~sweepFlag;
+        break;
+    }
+    case 5:
+    {
+        
+    }
+    }
+
+}
+
+
+void EXTI4_IRQHandler(void)
+{
+    delay_ms(100);
+    if(GPIO_ReadInputDataBit(GPIOF,GPIO_Pin_4)==1)
+    {
+        Key_Deal();
+    }
+    EXTI_ClearITPendingBit(EXTI_Line4);
+}
+
+
+void EXTI9_5_IRQHandler(void)
+{
+    delay_ms(100);
+    if(GPIO_ReadInputDataBit(GPIOF,GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7)==1)
+    {
+        Key_Deal();
+    }
+    EXTI_ClearFlag(EXTI_Line5|EXTI_Line6|EXTI_Line7);
+}
+
+float findVrms(u8 ch,u16 time)
+{
+    u16 i;
+
+    //ADS1115Config_A(0xe3,ch+0x02);
+    for(i=0; i<time; i++)
+    {
+        result=READAD(ch0);
+        if(result>adMax)
+        {
+            adMax=result;
+        }
+        if(result<adMin)
+        {
+            adMin=result;
+        }
+
+    }
+    return 0.707*4.096*2*(adMax-adMin)/65535*1000;
+}
+
+void measureInputRes(void)
+{
+    u16 adResult=0;
+    adResult=READAD(ch0);
+    adcResult_InputRes=adResult*4.096*2/65535*1000;
+    inputRes=adcResult_InputRes/(20.6-adcResult_InputRes)*2000;
+    sprintf((char*)lcdString,"Input Res:%.2f      ",inputRes);
+    LCD_ShowString(20,20,160,16,16,(u8*)lcdString);
+}
+void measureOutputRes(void)
+{
+    u16 adResult=0;
+    SWITCH=1;
+    delay_ms(300);
+    adResult=READAD(ch1);
+    adcResult_outputRes2=adResult*4.096*2/65535*1000;
+    SWITCH=0;
+    delay_ms(300);
+    adResult=READAD(ch1);
+    adcResult_outputRes1=adResult*4.096*2/65535*1000;
+    outputRes=((float)adcResult_outputRes1/adcResult_outputRes2-1)*3000.0;
+    sprintf((char*)lcdString,"Output Res:%.2f      ",outputRes);
+    LCD_ShowString(20,50,160,16,16,(u8*)lcdString);
+}
+
+void measureAmp(void)
+{
+	u32 inputData,outputData;
+	u16 adResult=0;
+	inputData=READAD(ch0);
+        outputData=READAD(ch1);
+        amp=outputData/inputData;
+        sprintf((char*)lcdString,"Amp:%.2f      ",amp);
+        LCD_ShowString(20,80,160,16,16,(u8*)lcdString);
+}
